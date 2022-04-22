@@ -7,6 +7,7 @@
 #include <OpenFlipper/BasePlugin/MouseInterface.hh>
 #include <OpenFlipper/BasePlugin/PickingInterface.hh>
 #include <OpenFlipper/common/Types.hh>
+#include <ACG/Scenegraph/LineNode.hh>
 
 #include <QWidget>
 #include <QPushButton>
@@ -20,6 +21,7 @@
 #include <QLineEdit>
 
 #include <vector>
+#include <map>
 
 
 #include <ObjectTypes/TriangleMesh/TriangleMesh.hh>
@@ -70,34 +72,36 @@ private:
     
     bool enableOnCellChanged = true;
 
+    OpenMesh::EPropHandleT<double> edge_adjuestment_angle_;
+    OpenMesh::FPropHandleT<ACG::Vec3d> face_tangent_vector_;
+
     // A vector that stores singular vertices with indices. <vertex_id, index>.
     std::vector<std::pair<int, float> > singularities_; 
 
 private slots:
     // BaseInterface
+    ACG::Vec3d transport(ACG::Vec3d, OpenMesh::SmartFaceHandle&, OpenMesh::SmartFaceHandle&);
+
     void initializePlugin();
 
     void updateVertexColors(TriMesh &);
-
+    void initializeMesh();
 
     void addSingularity();
     void removeSingularity();
     void clearSingularities();
 
-
     void refreshSingularityTable();
     void onItemSelected(const QItemSelection&, const QItemSelection&);
     void onCellChanged(int, int);
-
-
     
     void findContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
     void findNonContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
 
-
     void runAll();
 
-
+    void showVectorField();
+    void generateFakeVectorField();
 
 public slots:
     QString version() { return QString("1.0"); };

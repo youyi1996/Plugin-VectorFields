@@ -58,6 +58,8 @@ signals:
 
 public:
 
+    typedef std::vector<OpenMesh::HalfedgeHandle> Cycle;
+    
     ~VectorFields() {};
     
     QString name() { return QString("VectorFields"); };
@@ -74,6 +76,8 @@ private:
 
     OpenMesh::EPropHandleT<double> edge_adjuestment_angle_;
     OpenMesh::FPropHandleT<ACG::Vec3d> face_tangent_vector_;
+    OpenMesh::VPropHandleT<OpenMesh::VertexHandle> parent_prime_;
+    OpenMesh::FPropHandleT<OpenMesh::FaceHandle> parent_dual_;
 
     // A vector that stores singular vertices with indices. <vertex_id, index>.
     std::vector<std::pair<int, float> > singularities_; 
@@ -95,11 +99,29 @@ private slots:
     void onItemSelected(const QItemSelection&, const QItemSelection&);
     void onCellChanged(int, int);
     
+
+    // Jordan's Part
+    bool inPrimalSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
+    bool inDualSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
+    void buildPrimalSpanningTree(TriMesh& mesh_);
+    void buildDualSpanningCoTree(TriMesh& mesh_);
+    void buildTreeCotreeDecomposition(TriMesh& mesh_);
+
+    OpenMesh::HalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w);
+    OpenMesh::HalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g);
+    bool isDualBoundaryLoop(TriMesh& mesh_, const Cycle& cycle);
+    void appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycles);
+    // Jordan's Part... END
+
+
     void findContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
     void findNonContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
 
     void runAll();
 
+    void showPrimalTree();
+    void showDualTree();
+    void showCycles(std::vector<Cycle> &);
     void showVectorField();
     void generateFakeVectorField();
 

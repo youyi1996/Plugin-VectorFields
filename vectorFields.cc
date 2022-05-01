@@ -840,10 +840,15 @@ void VectorFields::showVectorField() {
                 }
                 centroid /= 3;
 
-                ACG::Vec3d p0 = centroid - scale / 2 * dir;
-                ACG::Vec3d p1 = centroid + scale / 2 * dir;
+                ACG::Vec3d p0 = centroid - scale / 3 * dir;
+                ACG::Vec3d p1 = centroid + scale / 3 * dir;
 
+                lineNode->add_color(OpenMesh::Vec4f(0.0f,0.0f,1.0f,1.0f));
                 lineNode->add_line(p0, p1);
+
+                lineNode->add_color(OpenMesh::Vec4f(1.0f,1.0f,0.0f,1.0f));
+                lineNode->add_line(.2*p0+.8*p1, p1);
+
             }
         }
     }

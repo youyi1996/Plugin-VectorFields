@@ -5,6 +5,14 @@
 #include <queue>
 #include <algorithm>
 
+void showMessage(std::string message) {
+    QMessageBox* msgBox = new QMessageBox();
+
+    msgBox->setText(QString::fromStdString(message));
+    msgBox->exec();
+    return;
+}
+
 // Helper functions:
 ACG::Matrix3x3d orthogonalize(ACG::Vec3d u, ACG::Vec3d v ) {
     ACG::Vec3d Rx = u.normalize();
@@ -56,18 +64,28 @@ ACG::Vec3d VectorFields::transport(ACG::Vec3d w0, OpenMesh::SmartFaceHandle& fh_
     OpenMesh::SmartVertexHandle vh_c;
     OpenMesh::SmartVertexHandle vh_d;
 
-    if (shared_edge.v0().idx() < shared_edge.v1().idx()) {
-        vh_a = shared_edge.v0();
-        vh_b = shared_edge.v1();
-    } else {
-        vh_a = shared_edge.v1();
-        vh_b = shared_edge.v0();
-    }
+    // if (shared_edge.v0().idx() < shared_edge.v1().idx()) {
+    //     vh_a = shared_edge.v0();
+    //     vh_b = shared_edge.v1();
+    // } else {
+    //     vh_a = shared_edge.v1();
+    //     vh_b = shared_edge.v0();
+    // }
     
-    if (shared_edge.halfedge(0).face().idx() == fh_i.idx()) {
+
+    if (shared_edge.h0().face().idx() == fh_i.idx()) {
+
+        vh_a = shared_edge.h0().from();
+        vh_b = shared_edge.h0().to();
+
         vh_c = shared_edge.halfedge(0).next().to();
         vh_d = shared_edge.halfedge(1).next().to();
+
     } else {
+
+        vh_a = shared_edge.h0().to();
+        vh_b = shared_edge.h0().from();
+
         vh_c = shared_edge.halfedge(1).next().to();
         vh_d = shared_edge.halfedge(0).next().to();
     }
@@ -83,6 +101,22 @@ ACG::Vec3d VectorFields::transport(ACG::Vec3d w0, OpenMesh::SmartFaceHandle& fh_
     );
 
     double angle = mesh_->property(edge_adjuestment_angle_, shared_edge);
+
+    // if (fh_i.idx() > fh_j.idx()) {
+    //     angle = - angle;
+    // }
+
+    if (shared_edge.h0().face().idx() == fh_i.idx()) {
+        angle = - angle;
+    }
+
+    if (shared_edge.idx() == 1080 || shared_edge.idx() == 1081) {
+        std::cout << (shared_edge.h0().face().idx() == fh_j.idx()) << std::endl;
+        std::cout << (d1_.coeffRef(fh_i.idx(), shared_edge.idx())) << std::endl;
+        std::cout << "Edge " << shared_edge.idx() << " angle " << angle << std::endl;
+        std::cout << "Ei " << Ei << std::endl;
+        std::cout << "Ej " << Ej << std::endl;
+    }
 
     ACG::Matrix3x3d R({
         cos(angle), -sin(angle), 0.,
@@ -202,13 +236,82 @@ void VectorFields::initializeMesh() {
             tri_obj->meshNode()->drawMode(ACG::SceneGraph::DrawModes::WIREFRAME | ACG::SceneGraph::DrawModes::SOLID_SMOOTH_SHADED | ACG::SceneGraph::DrawModes::POINTS_COLORED);
 
             tri_obj->materialNode()->enable_alpha_test(0.8);
-
             updateVertexColors(*mesh_);
 
             emit updatedObject(tri_obj->id(), UPDATE_ALL);
 
+
+            // Find Cycles
+
+            std::vector<Cycle> contraCycles;
+            std::vector<Cycle> nonContraCycles;
+
+            findContractibleLoops(*mesh_, contraCycles);
+
+            buildTreeCotreeDecomposition(*mesh_);
+            appendDualGenerators(*mesh_, nonContraCycles);
+
+            nGenerators = nonContraCycles.size();
+
+            basisCycles.clear();
+            basisCycles.reserve(contraCycles.size() + nonContraCycles.size());
+            basisCycles.insert(basisCycles.end(), contraCycles.begin(), contraCycles.end());
+            basisCycles.insert(basisCycles.end(), nonContraCycles.begin(), nonContraCycles.end());
+
+            showCycles(nonContraCycles);
+
+            // Build Matrix A
+
+            A = Eigen::SparseMatrix<double>(static_cast<size_t>(mesh_->n_edges()), basisCycles.size());
+            buildCycleMatrix(A, basisCycles);
+
+
+            // Compute the defects
+
+            K = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
+            b = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
+            std::vector<Eigen::Triplet<double>> triplets_K;
+            std::vector<Eigen::Triplet<double>> triplets_b;
+            // generatorOnBoundary.resize(nGenerators());
+
+            double vert_defect;
+            int j = 0;
+            for (auto vh : mesh_->vertices()) {
+                if (j < contraCycles.size()) {
+                    vert_defect = vertex_defect(vh);
+                    K(j) = vert_defect;
+                }
+                else {
+                    break;
+                }
+                j++;
+            }
+            
+            for (int i = 0; i < nonContraCycles.size(); i++) {
+                // if (isDualBoundaryLoop(mesh_, basisCycles[i])) {
+                //     K( i ) = -boundaryLoopCurvature( basisCycles[i] );
+                //     generatorOnBoundary[i - nContractibleCycles ] = true;
+                // }
+                // else {
+                    K( i + contraCycles.size() ) = -defect(nonContraCycles[i]);
+                //     generatorOnBoundary[i-nContractibleCycles] = false;
+                // }
+            }
+
+            A = A.transpose();
+
+            // Build d1
+            buildD1(d1_);
+
             std::cout << "Initialized!" << std::endl;
+            std::cout << "Matrix A: " << A.rows() << " rows " << A.cols() << " cols." << std::endl;
+            std::cout << "Matrix K: " << K.rows() << " rows " << K.cols() << " cols." << std::endl;
+            std::cout << "Matrix d1: " << d1_.rows() << " rows " << d1_.cols() << " cols." << std::endl;
+
+            showMessage("Initialization completed. \nFound " + std::to_string(contraCycles.size()) + " contra cycles and " + std::to_string(nGenerators) + " non-contra cycles." );
+
         }
+
     }
 
 
@@ -474,24 +577,24 @@ void VectorFields::buildTreeCotreeDecomposition(TriMesh& mesh_) {
     buildDualSpanningCoTree(mesh_);
 }
 
-OpenMesh::HalfedgeHandle VectorFields::sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w) {
+OpenMesh::SmartHalfedgeHandle VectorFields::sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w) {
     OpenMesh::HalfedgeHandle heh = *(mesh_.voh_iter(v));
     OpenMesh::HalfedgeHandle starting_heh = heh;
     do {
         if(mesh_.from_vertex_handle(mesh_.opposite_halfedge_handle(heh)) == w) {
-            return heh;
+            return OpenMesh::SmartHalfedgeHandle(heh.idx(), &mesh_);
         }
         heh = mesh_.next_halfedge_handle(mesh_.opposite_halfedge_handle(heh));
     } while (heh != starting_heh);
     assert( 0 );
 }
 
-OpenMesh::HalfedgeHandle VectorFields::sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g) {
+OpenMesh::SmartHalfedgeHandle VectorFields::sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g) {
     OpenMesh::HalfedgeHandle heh = *mesh_.fh_begin(f);
     OpenMesh::HalfedgeHandle starting_heh = heh;
     do {
         if(mesh_.face_handle(mesh_.opposite_halfedge_handle(heh)).idx() == g.idx()) {
-            return heh;
+            return OpenMesh::SmartHalfedgeHandle(heh.idx(), &mesh_);
         }
         heh = mesh_.next_halfedge_handle(heh);
     } while (heh != starting_heh);
@@ -514,7 +617,7 @@ void VectorFields::appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycl
             std::cout << "Find " << orphan_count << " edges." << std::endl;
             Cycle g, c1, c2;
             OpenMesh::FaceHandle f;
-            g.push_back(heh);
+            g.push_back(OpenMesh::SmartHalfedgeHandle(heh.idx(), &mesh_));
             f = mesh_.face_handle(mesh_.opposite_halfedge_handle(heh));
             while (f != mesh_.property(parent_dual_, f)) {
                 c2.push_back(sharedHalfEdge(mesh_, f, mesh_.property(parent_dual_, f)));
@@ -558,6 +661,316 @@ void VectorFields::appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycl
 ////// Jordan's Part...END
 
 
+////// Will's Part
+
+// add 2*pi*k to the right hand side, where k is the vector of singularity/generator indices
+void VectorFields::setupRHS() {
+    double indexSum = 0;
+
+    // iterate over vertices
+    for (auto vh : mesh_->vertices()) {
+
+    }
+}
+
+void VectorFields::resetRHS() {
+    // make a cop
+      // make a copy of the right hand side used in the most recent solve
+      for( int i = 0; i < basisCycles.size(); i++ )
+      {
+         b(i) = K(i);
+      }
+}
+
+void VectorFields::update() {
+    //... not sure what to do with Dense x, y?
+}
+
+double VectorFields::tipAngle(OpenMesh::Vec3d& x, OpenMesh::Vec3d& a, OpenMesh::Vec3d& b) 
+// returns the angle between (a-x) and (b-x)
+{
+    auto u = (a - x).normalize();
+    auto v = (b - x).normalize();
+
+    return atan2( OpenMesh::cross(u,v).norm(), OpenMesh::dot(u, v));
+}
+
+
+double VectorFields::boundaryLoopCurvature(Cycle& cycle) {
+    double totalK = 0.;
+
+    // get a halfedge of the "virtual" face bounded by the current cycle
+    auto v0 = cycle[0].opp().next().from();
+    auto he0 = v0.out();
+    do
+    {
+        he0 = he0.opp().next();
+    }
+        // is_boundary might not be the same as onBoundary in their implementation...
+    while (!he0.is_boundary());
+
+    // compute a "virtual" vertex in the middle of this loop
+    OpenMesh::Vec3d c(0., 0., 0.);
+    auto he = he0;
+    int boundaryLength = 0;
+    do
+    {
+        c += mesh_->point(he.from());
+        boundaryLength++;
+        he = he.next();
+    }
+    while (he != he0);
+    c /= (double) boundaryLength;
+
+    // compute the curvature around the center vertex
+    double K = 2.*M_PI;
+    he = he0;
+    do
+    {
+        OpenMesh::Vec3d a = mesh_->point(he.from());
+        OpenMesh::Vec3d b = mesh_->point(he.next().from());
+        K -= tipAngle(c, a, b);
+        he = he.next();
+    }
+    while (he != he0);
+    totalK += K;
+
+    // add the curvature around each of the boundary vertices, using
+    // the following labels:
+    //    c - virtual center vertex of boundary loop (computed above)
+    //    d - current boundary vertex (we walk around the 1-ring of this vertex)
+    //    a,b - consecutive interior vertices in 1-ring of d
+    //    e,f - boundary vertices adjacent to d
+    he = he0;
+    do
+    {
+        auto v = he.from();
+        OpenMesh::Vec3d d = mesh_->point(v);
+
+        K = 2.*M_PI;
+
+        auto he2 = v.out();
+        do
+        {
+            if (he2.is_boundary())
+            {
+                auto f = mesh_->point(he2.next().from());
+                K -= tipAngle(d, f, c);
+            }
+            else
+            {
+                auto a = mesh_->point(he2.next().from());
+                auto b = mesh_->point(he2.next().next().from());
+                K -= tipAngle(d, a, b);
+
+                if (he.opp().is_boundary())
+                {
+                    auto e = mesh_->point(he2.opp().from());
+                    K -= tipAngle( d, c, e );
+                }
+            }
+
+            he2 = he2.opp().next();
+        }
+        while ( he2 != v.out() );
+
+        totalK += K;
+
+        he = he.next();
+    }
+    while (he != he0);
+
+    return totalK;
+}
+
+double VectorFields::vertex_defect(OpenMesh::SmartVertexHandle vh) {
+    double sum = 0.;
+
+    // iterate over incident triangles
+    auto he = vh.out();
+    // wtf is this while loop structure lmao
+    do
+    {
+        // grab vertices
+        auto p1 = mesh_->point(he.from());
+        auto p2 = mesh_->point(he.next().from());
+        auto p3 = mesh_->point(he.next().next().from());
+
+        // subtract incident angle from sum
+        Vector u1 = (p2 - p1);
+        Vector u2 = (p3 - p1);
+        sum += atan2( (OpenMesh::cross(u1,u2)).norm(), OpenMesh::dot(u1, u2));
+
+        he = he.opp().next();
+    }
+    while (he != vh.out());
+    return 2.*M_PI - sum;
+}
+
+double VectorFields::parallelTransport(double phi, OpenMesh::SmartHalfedgeHandle he) 
+   // given an angle phi relative to the canonical reference frame
+   // of he->face, returns the angle parallel transported across he
+   // using the Levi-Civita connection, expressed relative to the
+   // canonical frame of he->flip->face
+{
+    // get (oriented) direction along shared edge;
+    auto u = he.from();
+    auto v = he.opp().from();
+    auto e = mesh_->point(v) - mesh_->point(u);
+    if (u.idx() > v.idx()) e = -e;
+
+    // compute angle adjustments between canonical frames;
+    ACG::Vec3d a = mesh_->point(he.from());
+    ACG::Vec3d b = mesh_->point(he.next().from());
+    ACG::Vec3d c = mesh_->point(he.next().next().from());
+    OpenMesh::Vec3d e1, e2;
+            // is .unit() the same as normalizing?
+    e1 = (b - a).normalize();
+    e2 = c - a;
+    e2 = (e2 - (e2*e1)*e1).normalize();
+
+    he = he.opp();
+    a = mesh_->point(he.from());
+    b = mesh_->point(he.next().from());
+    c = mesh_->point(he.next().next().from());
+    OpenMesh::Vec3d f1, f2;
+            // is .unit() the same as normalizing?
+    f1 = (b - a).normalize();
+    f2 = c - a;
+    f2 = (f2 - (f2*f1)*f1).normalize();
+
+    double deltaIJ = atan2(OpenMesh::dot(e, e2), OpenMesh::dot(e, e1));
+    double deltaJI = atan2(OpenMesh::dot(e, f2), OpenMesh::dot(e, f1));
+
+    // transport phi
+    return (phi - deltaIJ) + deltaJI;
+}
+
+double VectorFields::defect(Cycle& c) {
+    double theta = 0.;
+
+    for (auto he : c) {
+        theta = parallelTransport(theta, he);
+    }
+
+    while (theta >= M_PI) theta -= 2.*M_PI;
+    while (theta < -M_PI) theta += 2.*M_PI;
+
+    return -theta;
+
+}
+
+
+void VectorFields::buildCycleMatrix(Eigen::SparseMatrix<double>& A, std::vector<Cycle>& cycles) {
+
+    std::vector< Eigen::Triplet<double> > triplets_A;
+
+    for( unsigned int l = 0; l < cycles.size(); l++ )
+    {
+        for(  auto h  = cycles[l].begin();
+                h != cycles[l].end();
+                h ++ )
+        {
+            OpenMesh::SmartHalfedgeHandle heh = *h;
+            auto vh = mesh_->to_vertex_handle(heh);
+            // these indices might be wrong...
+            int k = heh.edge().idx();
+            int i = heh.face().idx();
+                // might not give the same half edge as in their code...
+            int j = heh.opp().face().idx();
+
+            // if( i > j ) {
+            //     triplets_A.emplace_back(k, l, -1.);
+            // }
+            // else {
+            //     triplets_A.emplace_back(k, l, 1.);
+            // }
+
+            if (heh.idx() == heh.edge().h0().idx()) {
+                triplets_A.emplace_back(k, l, 1.);
+            }
+            else {
+                triplets_A.emplace_back(k, l, -1.);
+            }
+        }
+    }
+    A.setFromTriplets(triplets_A.begin(), triplets_A.end());
+}
+
+void VectorFields::appendDirectionalConstraints(TriMesh& mesh, std::vector<Cycle>& basisCycles, std::vector<double>& holonomies) {
+    // first point all faces to themselves to indicate that they have not yet
+    // been added to the tree; meanwhile look for a constrained face to serve
+    // as the root for our constraint tree (if there aren't any constrained
+    // faces, an arbitrary face will work just fine)
+    // for ( auto fh : mesh.faces() ) {
+        
+    // }
+}
+
+void VectorFields::findContractibleLoops(TriMesh& mesh, std::vector<Cycle>& basisCycles) {
+    // contractible bases
+                    // maybe n_vertices = size()?
+    vertex2row.resize(mesh.n_vertices());
+    for (auto vh : mesh_->vertices()) {
+        std::cout << "Vertex id: " << vh.idx() << std::endl;
+        if (vh.is_boundary())
+        {
+            // maybe subtract one, says theirs is 0-based? not sure what that means
+            vertex2row[ vh.idx() ] = -1;
+            continue;
+        }
+        Cycle c;
+        // returns an outgoing half-edge
+        auto he = vh.halfedge();
+        do
+        {
+            c.push_back( he );
+            //   he->flip->next
+            he = he.opp().next();
+        }
+        while ( he != vh.out());
+
+        vertex2row[ vh.idx() ] = static_cast<int>(basisCycles.size()-1);
+        basisCycles.push_back(c);
+    }
+}
+
+////// Will's Part End
+
+void VectorFields::buildD1(Eigen::SparseMatrix<double>& d1) {
+    d1.resize(mesh_->n_faces(), mesh_->n_edges());
+    std::vector< Eigen::Triplet<double> > triplets_d1;
+
+    for (auto fh : mesh_->faces()) {
+        int i = fh.idx();
+
+        auto heh = fh.halfedge();
+        int start_heh = heh.idx();
+        while (true) {
+            int j = heh.opp().face().idx();
+            // if (i<j) {
+            //     triplets_d1.emplace_back(i, heh.edge().idx(), 1.);
+            // } else {
+            //     triplets_d1.emplace_back(i, heh.edge().idx(), -1);
+            // }
+
+            if (heh.idx() == heh.edge().h0().idx()) {
+                triplets_d1.emplace_back(i, heh.edge().idx(), 1.);
+            } else {
+                triplets_d1.emplace_back(i, heh.edge().idx(), -1);
+            }
+
+            heh = heh.next();
+            if (heh.idx()==start_heh) {
+                break;
+            } 
+        }
+
+    }
+
+    d1.setFromTriplets(triplets_d1.begin(), triplets_d1.end());
+}
+
 void VectorFields::runAll() {
     // Pipeline:
     // 1. Find contractible & non- cycles
@@ -569,20 +982,75 @@ void VectorFields::runAll() {
     // 6. Construct the direction fields, save the angle with each face
     // 7. Visualise the vector field on the mesh
 
-    std::vector<Cycle> non_contra_cycles;
-    buildTreeCotreeDecomposition(*mesh_);
+    // Deal with singularities, build vector b
+    // First copy K to b
+    for (int i = 0; i < basisCycles.size(); i++) {
+        b(i) = K(i);
+    }
+    
+    // Then update b
+    float sum_indices = 0;
+    for (int i = 0; i < singularities_.size(); i++) {
+        int vertex_id = singularities_[i].first;
+        float index = singularities_[i].second;
 
-    // showPrimalTree();
-    // showDualTree();
+        sum_indices += index;
 
-    appendDualGenerators(*mesh_, non_contra_cycles);
+        b(vertex_id) = K(vertex_id) - 2 * M_PI * index;
+        std::cout << "Updated defect for vertex " << vertex_id << " from " << K(vertex_id) << " to " << b(vertex_id) << std::endl;
+
+    }
+
+    if ( sum_indices != 2-2*nGenerators ) {
+        showMessage("Indices must sum to " + std::to_string(2-2*nGenerators) + " for this mesh!");
+        return;
+    }
+
+    std::cout << "Solver: Init." << std::endl;
+    Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > solver;
+    solver.compute(A);
+    std::cout << "Solver: Computed A." << std::endl;
+
+    // One simple solution
+    Eigen::MatrixXd x = solver.solve(-b);
+    std::cout << "Solver: Solved x. " << std::endl;
+
+    solver.compute(d1_ * d1_.transpose());
+    Eigen::SparseMatrix<double> I(mesh_->n_faces(),mesh_->n_faces());
+    I.setIdentity();
+    auto inv = solver.solve(I);
+
+    Eigen::MatrixXd x_optimal = x - d1_.transpose() * inv * d1_ * x;
+    // Eigen::MatrixXd x_optimal = x;
+
+    // std::cout << "Edge 1091 angle " << x_optimal(1091) << std::endl;
+
+    for (int i=0; i<mesh_->n_edges(); i++) {
+        if (A.coeffRef(20, i) != 0) {
+            std::cout << "Edge " << i << "->" << A.coeffRef(20, i) << " angle " << x_optimal(i) << std::endl;
+        }
+    }
+    std::cout << b.coeffRef(20) << std::endl;
+
+    // for (int i=0; i<mesh_->n_edges(); i++) {
+    //     if (abs(x_optimal(i)) > 0.01) {
+    //         std::cout << "Edge " << i << " angle " << x_optimal(i) << std::endl;
+    //     }
+    // }
 
 
-    std::cout << non_contra_cycles.size() << std::endl;
-    // std::cout << non_contra_cycles[0].size() << std::endl;
-    // std::cout << non_contra_cycles[10].size() << std::endl;
+    for (auto eh : mesh_->edges()) {
+        mesh_->property(edge_adjuestment_angle_, mesh_->edge_handle(eh.idx())) = x_optimal(eh.idx());
+    }
 
-    showCycles(non_contra_cycles);
+    for (PluginFunctions::ObjectIterator o_it(PluginFunctions::TARGET_OBJECTS, DATA_TRIANGLE_MESH); o_it != PluginFunctions::objectsEnd(); ++o_it) {
+
+        auto tri_obj = PluginFunctions::triMeshObject(*o_it);
+        emit updatedObject(tri_obj->id(), UPDATE_ALL);
+    }
+    
+
+    showVectorField();
 
 }
 
@@ -762,15 +1230,23 @@ void VectorFields::showVectorField() {
 
     if (!mesh_) return;
 
-    OpenMesh::SmartFaceHandle root_face = *(mesh_->faces_begin());
+    // OpenMesh::SmartFaceHandle root_face = *(mesh_->faces_begin());
+    OpenMesh::SmartFaceHandle root_face = OpenMesh::SmartFaceHandle(420, mesh_);
     OpenMesh::SmartHalfedgeHandle root_heh;
 
     for (auto heh : root_face.halfedges()) {
         root_heh = heh;
         break;
     }
+
     ACG::Vec3d init_direction = (mesh_->point(root_heh.to()) - mesh_->point(root_heh.from())).normalize();
-    mesh_->property(face_tangent_vector_, root_face) = init_direction;
+
+    std::cout << "First direction: " << init_direction << " " << root_heh.from().idx() << "->" << root_heh.to().idx() << std::endl;
+    auto second_heh = root_heh.next();
+    ACG::Vec3d second_direction = (mesh_->point(second_heh.to()) - mesh_->point(second_heh.from())).normalize();
+    std::cout << "Second direction: " << second_direction << " " << second_heh.from().idx() << "->" << second_heh.to().idx() << std::endl;
+
+    mesh_->property(face_tangent_vector_, root_face) = - (-init_direction + second_direction).normalize();
 
     std::vector<OpenMesh::SmartFaceHandle> Q;
     std::map<int, bool> visited;
@@ -846,7 +1322,7 @@ void VectorFields::showVectorField() {
                 lineNode->add_color(OpenMesh::Vec4f(0.0f,0.0f,1.0f,1.0f));
                 lineNode->add_line(p0, p1);
 
-                lineNode->add_color(OpenMesh::Vec4f(1.0f,1.0f,0.0f,1.0f));
+                lineNode->add_color(OpenMesh::Vec4f(0.0f,1.0f,0.0f,1.0f));
                 lineNode->add_line(.2*p0+.8*p1, p1);
 
             }

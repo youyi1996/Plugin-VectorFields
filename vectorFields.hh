@@ -19,6 +19,7 @@
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLineEdit>
+#include <QMessageBox>
 
 #include <vector>
 #include <map>
@@ -58,7 +59,7 @@ signals:
 
 public:
 
-    typedef std::vector<OpenMesh::HalfedgeHandle> Cycle;
+    typedef std::vector<OpenMesh::SmartHalfedgeHandle> Cycle;
     
     ~VectorFields() {};
     
@@ -82,9 +83,58 @@ private:
     // A vector that stores singular vertices with indices. <vertex_id, index>.
     std::vector<std::pair<int, float> > singularities_; 
 
+    int nGenerators;
+
+    ACG::Vec3d transport(ACG::Vec3d, OpenMesh::SmartFaceHandle&, OpenMesh::SmartFaceHandle&);
+
+    // Jordan's Part
+    bool inPrimalSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
+    bool inDualSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
+    void buildPrimalSpanningTree(TriMesh& mesh_);
+    void buildDualSpanningCoTree(TriMesh& mesh_);
+    void buildTreeCotreeDecomposition(TriMesh& mesh_);
+
+    OpenMesh::SmartHalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w);
+    OpenMesh::SmartHalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g);
+    bool isDualBoundaryLoop(TriMesh& mesh_, const Cycle& cycle);
+    void appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycles);
+    // Jordan's Part... END
+
+    // Will's Part 
+
+    std::vector<int> vertex2row;             // maps vertex indices to matrix row indices
+    std::vector<bool> generatorOnBoundary;   // indicates whether each generator is part of the surface boundary
+
+    std::vector<Cycle> basisCycles;
+
+    Eigen::SparseMatrix<double> A; // Matrix A
+    Eigen::SparseMatrix<double> d1_;
+    Eigen::MatrixXd K; // K is the original holonomy to be canceled by parallel transport.
+    Eigen::MatrixXd b; // b is the final defects applied with singularities.
+
+    void findContractibleLoops(TriMesh& mesh, std::vector<Cycle>& basisCycles);
+    void appendDirectionalConstraints(TriMesh& mesh, std::vector<Cycle>& basisCycles, std::vector<double>& holonomies);
+    void buildCycleMatrix(Eigen::SparseMatrix<double>& A, std::vector<Cycle>& cycles);
+    void buildD1(Eigen::SparseMatrix<double>& d1);
+    void resetRHS();
+    void setupRHS();
+    void update();
+    
+
+    double parallelTransport( double phi, OpenMesh::SmartHalfedgeHandle he ); // transport a direction across an edge using Levi-Civita
+    double defect(Cycle& c); // computes angle defect resulting from parallel transport around a dual cycle c
+    double vertex_defect(OpenMesh::SmartVertexHandle vh);
+    double boundaryLoopCurvature( Cycle& cycle );      // computes the Riemannian holonomy around a boundary loop
+    double tipAngle(OpenMesh::Vec3d& x, OpenMesh::Vec3d& a, OpenMesh::Vec3d& b);
+    bool inPrimalSpanningTree(OpenMesh::SmartHalfedgeHandle he);
+    bool inDualSpanningTree (OpenMesh::SmartHalfedgeHandle he);
+
+
+    // Will's Part... END
+
+
 private slots:
     // BaseInterface
-    ACG::Vec3d transport(ACG::Vec3d, OpenMesh::SmartFaceHandle&, OpenMesh::SmartFaceHandle&);
 
     void initializePlugin();
 
@@ -100,22 +150,6 @@ private slots:
     void onCellChanged(int, int);
     
 
-    // Jordan's Part
-    bool inPrimalSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
-    bool inDualSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
-    void buildPrimalSpanningTree(TriMesh& mesh_);
-    void buildDualSpanningCoTree(TriMesh& mesh_);
-    void buildTreeCotreeDecomposition(TriMesh& mesh_);
-
-    OpenMesh::HalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w);
-    OpenMesh::HalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g);
-    bool isDualBoundaryLoop(TriMesh& mesh_, const Cycle& cycle);
-    void appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycles);
-    // Jordan's Part... END
-
-
-    void findContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
-    void findNonContractibleLoops(TriMesh& _mesh, std::vector<std::vector<int> >);
 
     void runAll();
 

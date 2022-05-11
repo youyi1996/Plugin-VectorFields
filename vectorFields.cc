@@ -110,13 +110,13 @@ ACG::Vec3d VectorFields::transport(ACG::Vec3d w0, OpenMesh::SmartFaceHandle& fh_
         angle = - angle;
     }
 
-    if (shared_edge.idx() == 1080 || shared_edge.idx() == 1081) {
-        std::cout << (shared_edge.h0().face().idx() == fh_j.idx()) << std::endl;
-        std::cout << (d1_.coeffRef(fh_i.idx(), shared_edge.idx())) << std::endl;
-        std::cout << "Edge " << shared_edge.idx() << " angle " << angle << std::endl;
-        std::cout << "Ei " << Ei << std::endl;
-        std::cout << "Ej " << Ej << std::endl;
-    }
+    // if (shared_edge.idx() == 1080 || shared_edge.idx() == 1081) {
+    //     std::cout << (shared_edge.h0().face().idx() == fh_j.idx()) << std::endl;
+    //     std::cout << (d1_.coeffRef(fh_i.idx(), shared_edge.idx())) << std::endl;
+    //     std::cout << "Edge " << shared_edge.idx() << " angle " << angle << std::endl;
+    //     std::cout << "Ei " << Ei << std::endl;
+    //     std::cout << "Ej " << Ej << std::endl;
+    // }
 
     ACG::Matrix3x3d R({
         cos(angle), -sin(angle), 0.,
@@ -190,6 +190,7 @@ void VectorFields::initializePlugin() {
 
     connect(singularityTable, SIGNAL(cellChanged(int, int)), this, SLOT(onCellChanged(int, int)));
 
+    connect(setConstrainedFacesButton, SIGNAL(clicked()), this, SLOT(setConstraintFaces()));
 
     connect(runButton, SIGNAL(clicked()), this, SLOT(runAll()));
 
@@ -240,80 +241,94 @@ void VectorFields::initializeMesh() {
 
             emit updatedObject(tri_obj->id(), UPDATE_ALL);
 
-
-            // Find Cycles
-
-            std::vector<Cycle> contraCycles;
-            std::vector<Cycle> nonContraCycles;
-
-            findContractibleLoops(*mesh_, contraCycles);
-
-            buildTreeCotreeDecomposition(*mesh_);
-            appendDualGenerators(*mesh_, nonContraCycles);
-
-            nGenerators = nonContraCycles.size();
-
-            basisCycles.clear();
-            basisCycles.reserve(contraCycles.size() + nonContraCycles.size());
-            basisCycles.insert(basisCycles.end(), contraCycles.begin(), contraCycles.end());
-            basisCycles.insert(basisCycles.end(), nonContraCycles.begin(), nonContraCycles.end());
-
-            showCycles(nonContraCycles);
-
-            // Build Matrix A
-
-            A = Eigen::SparseMatrix<double>(static_cast<size_t>(mesh_->n_edges()), basisCycles.size());
-            buildCycleMatrix(A, basisCycles);
-
-
-            // Compute the defects
-
-            K = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
-            b = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
-            std::vector<Eigen::Triplet<double>> triplets_K;
-            std::vector<Eigen::Triplet<double>> triplets_b;
-            // generatorOnBoundary.resize(nGenerators());
-
-            double vert_defect;
-            int j = 0;
-            for (auto vh : mesh_->vertices()) {
-                if (j < contraCycles.size()) {
-                    vert_defect = vertex_defect(vh);
-                    K(j) = vert_defect;
-                }
-                else {
-                    break;
-                }
-                j++;
-            }
-            
-            for (int i = 0; i < nonContraCycles.size(); i++) {
-                // if (isDualBoundaryLoop(mesh_, basisCycles[i])) {
-                //     K( i ) = -boundaryLoopCurvature( basisCycles[i] );
-                //     generatorOnBoundary[i - nContractibleCycles ] = true;
-                // }
-                // else {
-                    K( i + contraCycles.size() ) = -defect(nonContraCycles[i]);
-                //     generatorOnBoundary[i-nContractibleCycles] = false;
-                // }
-            }
-
-            A = A.transpose();
-
-            // Build d1
-            buildD1(d1_);
-
-            std::cout << "Initialized!" << std::endl;
-            std::cout << "Matrix A: " << A.rows() << " rows " << A.cols() << " cols." << std::endl;
-            std::cout << "Matrix K: " << K.rows() << " rows " << K.cols() << " cols." << std::endl;
-            std::cout << "Matrix d1: " << d1_.rows() << " rows " << d1_.cols() << " cols." << std::endl;
-
-            showMessage("Initialization completed. \nFound " + std::to_string(contraCycles.size()) + " contra cycles and " + std::to_string(nGenerators) + " non-contra cycles." );
+            findCyclesAndBuildA(nullptr);
+            // showMessage("Init complete! \n" );
 
         }
 
     }
 
+
+}
+
+void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
+
+    // Find Cycles
+
+    std::vector<Cycle> contraCycles;
+    std::vector<Cycle> nonContraCycles;
+
+    std::cout << "Finding contractible cycles..." << std::endl;
+    findContractibleLoops(*mesh_, contraCycles);
+
+    std::cout << "Finding non-contractible cycles..." << std::endl;
+    buildTreeCotreeDecomposition(*mesh_, root_fh);
+    appendDualGenerators(*mesh_, nonContraCycles);
+
+    nGenerators = nonContraCycles.size();
+
+    std::cout << "Found " << nGenerators << " non-contractible cycles..." << std::endl;
+
+    basisCycles.clear();
+    basisCycles.reserve(contraCycles.size() + nonContraCycles.size());
+    basisCycles.insert(basisCycles.end(), contraCycles.begin(), contraCycles.end());
+    basisCycles.insert(basisCycles.end(), nonContraCycles.begin(), nonContraCycles.end());
+
+    showCycles(nonContraCycles);
+
+    // Build Matrix A
+    std::cout << "Building Matrix A..." << std::endl;
+
+    A = Eigen::SparseMatrix<double>(static_cast<size_t>(mesh_->n_edges()), basisCycles.size());
+    buildCycleMatrix(A, basisCycles);
+
+    // Compute the defects
+
+    K = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
+    b = Eigen::MatrixXd(Eigen::MatrixXd::Zero(basisCycles.size(), 1));
+    std::vector<Eigen::Triplet<double>> triplets_K;
+    std::vector<Eigen::Triplet<double>> triplets_b;
+    // generatorOnBoundary.resize(nGenerators());
+
+    double vert_defect;
+    int j = 0;
+    for (auto vh : mesh_->vertices()) {
+        if (j < contraCycles.size()) {
+            vert_defect = vertex_defect(vh);
+            K(j) = vert_defect;
+        }
+        else {
+            break;
+        }
+        j++;
+    }
+    
+    for (int i = 0; i < nonContraCycles.size(); i++) {
+        // if (isDualBoundaryLoop(mesh_, basisCycles[i])) {
+        //     K( i ) = -boundaryLoopCurvature( basisCycles[i] );
+        //     generatorOnBoundary[i - nContractibleCycles ] = true;
+        // }
+        // else {
+            K( i + contraCycles.size() ) = -defect(nonContraCycles[i]);
+        //     generatorOnBoundary[i-nContractibleCycles] = false;
+        // }
+    }
+
+    A = A.transpose();
+
+    std::cout << "QRSolver: Computing A..." << std::endl;
+    QRSolver.compute(A);
+    std::cout << "QRSolver: Computed A." << std::endl;
+
+    // Build d1
+    buildD1(d1_);
+
+    std::cout << "Initialized!" << std::endl;
+    std::cout << "Matrix A: " << A.rows() << " rows " << A.cols() << " cols." << std::endl;
+    std::cout << "Matrix K: " << K.rows() << " rows " << K.cols() << " cols." << std::endl;
+    std::cout << "Matrix d1: " << d1_.rows() << " rows " << d1_.cols() << " cols." << std::endl;
+
+    showMessage("Found " + std::to_string(contraCycles.size()) + " contra cycles and " + std::to_string(nGenerators) + " non-contra cycles." );
 
 }
 
@@ -356,7 +371,7 @@ void VectorFields::addSingularity() {
         auto tri_obj = PluginFunctions::triMeshObject(*o_it);
         auto trimesh = tri_obj->mesh();
 
-        if (trimesh) {
+        if (mesh_ == trimesh) {
 
             // mesh_ = trimesh;
 
@@ -388,10 +403,12 @@ void VectorFields::addSingularity() {
 
             emit updatedObject(tri_obj->id(), UPDATE_ALL);
 
+            refreshSingularityTable();
+            return;
         }
     }
 
-    refreshSingularityTable();
+    showMessage("Please initialize the mesh first.");
 
 }
 
@@ -545,10 +562,18 @@ void VectorFields::buildPrimalSpanningTree(TriMesh& mesh_) {
         }
 }
 
-void VectorFields::buildDualSpanningCoTree(TriMesh& mesh_) {
-    auto f_it_root = mesh_.faces_begin();
-    while ((*f_it_root).is_boundary()) f_it_root++;
-    OpenMesh::FaceHandle root = *f_it_root;
+void VectorFields::buildDualSpanningCoTree(TriMesh& mesh_, OpenMesh::SmartFaceHandle* root_fh) {
+    
+    OpenMesh::FaceHandle root;
+    if (root_fh) {
+        root = *root_fh;
+    } else {
+        auto f_it_root = mesh_.faces_begin();
+        while ((*f_it_root).is_boundary()) f_it_root++;
+        root = *f_it_root;
+    }
+
+
 
     for(auto fh : mesh_.faces()) {
         mesh_.property(parent_dual_, fh) = fh;
@@ -572,9 +597,9 @@ void VectorFields::buildDualSpanningCoTree(TriMesh& mesh_) {
     }
 }
 
-void VectorFields::buildTreeCotreeDecomposition(TriMesh& mesh_) {
+void VectorFields::buildTreeCotreeDecomposition(TriMesh& mesh_, OpenMesh::SmartFaceHandle* root_fh) {
     buildPrimalSpanningTree(mesh_);
-    buildDualSpanningCoTree(mesh_);
+    buildDualSpanningCoTree(mesh_, root_fh);
 }
 
 OpenMesh::SmartHalfedgeHandle VectorFields::sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w) {
@@ -912,7 +937,7 @@ void VectorFields::findContractibleLoops(TriMesh& mesh, std::vector<Cycle>& basi
                     // maybe n_vertices = size()?
     vertex2row.resize(mesh.n_vertices());
     for (auto vh : mesh_->vertices()) {
-        std::cout << "Vertex id: " << vh.idx() << std::endl;
+        // std::cout << "Vertex id: " << vh.idx() << std::endl;
         if (vh.is_boundary())
         {
             // maybe subtract one, says theirs is 0-based? not sure what that means
@@ -971,6 +996,10 @@ void VectorFields::buildD1(Eigen::SparseMatrix<double>& d1) {
     d1.setFromTriplets(triplets_d1.begin(), triplets_d1.end());
 }
 
+void VectorFields::setConstraintFaces() {
+
+}
+
 void VectorFields::runAll() {
     // Pipeline:
     // 1. Find contractible & non- cycles
@@ -982,13 +1011,30 @@ void VectorFields::runAll() {
     // 6. Construct the direction fields, save the angle with each face
     // 7. Visualise the vector field on the mesh
 
+    bool initialized = false;
+    for (PluginFunctions::ObjectIterator o_it(PluginFunctions::TARGET_OBJECTS, DATA_TRIANGLE_MESH); o_it != PluginFunctions::objectsEnd(); ++o_it) {
+        auto tri_obj = PluginFunctions::triMeshObject(*o_it);
+        if (mesh_ == tri_obj->mesh()) {
+            initialized = true;
+        }
+    }
+
+    if (!initialized) {
+        showMessage("Please initialize the mesh first.");
+        return;
+    }
+
+
     // Deal with singularities, build vector b
     // First copy K to b
+    std::cout << "Copying K to b..." << std::endl;
     for (int i = 0; i < basisCycles.size(); i++) {
         b(i) = K(i);
     }
     
     // Then update b
+    std::cout << "Updating b with singularities..." << std::endl;
+
     float sum_indices = 0;
     for (int i = 0; i < singularities_.size(); i++) {
         int vertex_id = singularities_[i].first;
@@ -1006,38 +1052,39 @@ void VectorFields::runAll() {
         return;
     }
 
-    std::cout << "Solver: Init." << std::endl;
-    Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > solver;
-    solver.compute(A);
-    std::cout << "Solver: Computed A." << std::endl;
+    // std::cout << "Solver: Init." << std::endl;
+    // Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > solver;
+    // Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double> > solver;
+    // solver.compute(A);
+    // std::cout << "Solver: Computed A." << std::endl;
+
+    // Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> >  solver2;
+    // solver2.compute(solver.matrixR().transpose());
+    // Eigen::MatrixXd y = solver2.solve(solver.colsPermutation().transpose() * (-b));
+
+    // Eigen::MatrixXd x_optimal = solver.matrixQ() * y;
+
 
     // One simple solution
-    Eigen::MatrixXd x = solver.solve(-b);
-    std::cout << "Solver: Solved x. " << std::endl;
+    std::cout << "QRSolver: Solving x..." << std::endl;
+    Eigen::MatrixXd x = QRSolver.solve(-b);
+    std::cout << "QRSolver: Solved x. Start computing d1*d1.T..." << std::endl;
 
-    solver.compute(d1_ * d1_.transpose());
-    Eigen::SparseMatrix<double> I(mesh_->n_faces(),mesh_->n_faces());
-    I.setIdentity();
-    auto inv = solver.solve(I);
+    // Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > solver2;
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double> > solver2;
+    solver2.compute(d1_ * d1_.transpose());
+    std::cout << "solver2: Computed d1*d1.T." << std::endl;
 
-    Eigen::MatrixXd x_optimal = x - d1_.transpose() * inv * d1_ * x;
-    // Eigen::MatrixXd x_optimal = x;
+    // Eigen::SparseMatrix<double> I(mesh_->n_faces(),mesh_->n_faces());
+    // I.setIdentity();
+    Eigen::MatrixXd y = solver2.solve(d1_ * x);
+    std::cout << "solver2: Solved (d1*d1.T)^-1. " << std::endl;
 
-    // std::cout << "Edge 1091 angle " << x_optimal(1091) << std::endl;
+    std::cout << "rows " << y.rows() << " cols " << y.cols() << std::endl;
 
-    for (int i=0; i<mesh_->n_edges(); i++) {
-        if (A.coeffRef(20, i) != 0) {
-            std::cout << "Edge " << i << "->" << A.coeffRef(20, i) << " angle " << x_optimal(i) << std::endl;
-        }
-    }
-    std::cout << b.coeffRef(20) << std::endl;
-
-    // for (int i=0; i<mesh_->n_edges(); i++) {
-    //     if (abs(x_optimal(i)) > 0.01) {
-    //         std::cout << "Edge " << i << " angle " << x_optimal(i) << std::endl;
-    //     }
-    // }
-
+    // Eigen::MatrixXd x_optimal = x - d1_.transpose() * inv * d1_ * x;
+    Eigen::MatrixXd x_optimal = x - d1_.transpose() * y;
+    std::cout << "Computed x_optimal. " << std::endl;
 
     for (auto eh : mesh_->edges()) {
         mesh_->property(edge_adjuestment_angle_, mesh_->edge_handle(eh.idx())) = x_optimal(eh.idx());
@@ -1049,8 +1096,9 @@ void VectorFields::runAll() {
         emit updatedObject(tri_obj->id(), UPDATE_ALL);
     }
     
-
+    std::cout << "Start building the vector field..." << std::endl;
     showVectorField();
+    std::cout << "Completed! " << std::endl;
 
 }
 
@@ -1244,9 +1292,10 @@ void VectorFields::showVectorField() {
     std::cout << "First direction: " << init_direction << " " << root_heh.from().idx() << "->" << root_heh.to().idx() << std::endl;
     auto second_heh = root_heh.next();
     ACG::Vec3d second_direction = (mesh_->point(second_heh.to()) - mesh_->point(second_heh.from())).normalize();
-    std::cout << "Second direction: " << second_direction << " " << second_heh.from().idx() << "->" << second_heh.to().idx() << std::endl;
+    // std::cout << "Second direction: " << second_direction << " " << second_heh.from().idx() << "->" << second_heh.to().idx() << std::endl;
 
-    mesh_->property(face_tangent_vector_, root_face) = - (-init_direction + second_direction).normalize();
+    mesh_->property(face_tangent_vector_, root_face) = init_direction.normalize();
+    mesh_->property(face_tangent_vector_, root_face) = -( - init_direction + second_direction ).normalize();
 
     std::vector<OpenMesh::SmartFaceHandle> Q;
     std::map<int, bool> visited;
@@ -1278,7 +1327,7 @@ void VectorFields::showVectorField() {
 
             ACG::SceneGraph::LineNode* lineNode;
             //create line node
-            if (!tri_obj->getAdditionalNode(lineNode, name(),"Vector Field"))
+            if (!tri_obj->getAdditionalNode(lineNode, name(), "Vector Field"))
             {
                 lineNode = new ACG::SceneGraph::LineNode(ACG::SceneGraph::LineNode::LineSegmentsMode,
                         tri_obj->manipulatorNode(),"Vector Field");

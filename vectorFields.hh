@@ -83,16 +83,19 @@ private:
     // A vector that stores singular vertices with indices. <vertex_id, index>.
     std::vector<std::pair<int, float> > singularities_; 
 
+    Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > QRSolver;
+
     int nGenerators;
 
     ACG::Vec3d transport(ACG::Vec3d, OpenMesh::SmartFaceHandle&, OpenMesh::SmartFaceHandle&);
+    void findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh);
 
     // Jordan's Part
     bool inPrimalSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
     bool inDualSpanningTree(TriMesh& mesh_, OpenMesh::HalfedgeHandle he);
     void buildPrimalSpanningTree(TriMesh& mesh_);
-    void buildDualSpanningCoTree(TriMesh& mesh_);
-    void buildTreeCotreeDecomposition(TriMesh& mesh_);
+    void buildDualSpanningCoTree(TriMesh& mesh_, OpenMesh::SmartFaceHandle* root_fh);
+    void buildTreeCotreeDecomposition(TriMesh& mesh_, OpenMesh::SmartFaceHandle* root_fh);
 
     OpenMesh::SmartHalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::VertexHandle v, OpenMesh::VertexHandle w);
     OpenMesh::SmartHalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g);
@@ -149,6 +152,7 @@ private slots:
     void onItemSelected(const QItemSelection&, const QItemSelection&);
     void onCellChanged(int, int);
     
+    void setConstraintFaces();
 
 
     void runAll();

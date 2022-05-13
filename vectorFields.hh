@@ -70,6 +70,7 @@ public:
 private:
 
     QTableWidget* singularityTable;
+    QLineEdit* setRootFaceAngleLineEdit = new QLineEdit("30");
 
     TriMesh* mesh_ = nullptr;
     
@@ -82,6 +83,10 @@ private:
 
     // A vector that stores singular vertices with indices. <vertex_id, index>.
     std::vector<std::pair<int, float> > singularities_; 
+    std::vector<OpenMesh::SmartFaceHandle> constrained_faces_;
+
+    int root_face_angle_ = 30;
+    ACG::Vec3d root_face_dir_ = ACG::Vec3d(0, 0, 0);
 
     Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int> > QRSolver;
 
@@ -101,6 +106,7 @@ private:
     OpenMesh::SmartHalfedgeHandle sharedHalfEdge(TriMesh& mesh_, OpenMesh::FaceHandle f, OpenMesh::FaceHandle g);
     bool isDualBoundaryLoop(TriMesh& mesh_, const Cycle& cycle);
     void appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycles);
+    void findConstrainedFacePaths(TriMesh& mesh_, std::vector<Cycle>& paths);
     // Jordan's Part... END
 
     // Will's Part 
@@ -135,6 +141,7 @@ private:
 
     // Will's Part... END
 
+    void showRootFaceVector();
 
 private slots:
     // BaseInterface
@@ -153,6 +160,7 @@ private slots:
     void onCellChanged(int, int);
     
     void setConstraintFaces();
+    void onRootFaceAngleChanged(const QString & );
 
 
     void runAll();

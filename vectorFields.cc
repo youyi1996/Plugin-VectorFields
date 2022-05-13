@@ -4,6 +4,7 @@
 #include <string>
 #include <queue>
 #include <algorithm>
+#include <chrono>
 
 void showMessage(std::string message) {
     QMessageBox* msgBox = new QMessageBox();
@@ -147,9 +148,9 @@ void VectorFields::initializePlugin() {
 
     QLabel* constraintsLabel = new QLabel("Directional Constraints", toolBox);
     QPushButton* setConstrainedFacesButton = new QPushButton("Set Constrained Faces", toolBox);
-    QLabel* faceVectorLabel = new QLabel("Face Vector", toolBox);
-    QLineEdit* setFaceVectorLineEdit = new QLineEdit("0.0 1.0 0.0", toolBox);
-    setFaceVectorLineEdit->setPlaceholderText("v0 v1 v2");
+    QLabel* rootFaceAngleLabel = new QLabel("Root face angle", toolBox);
+
+    setRootFaceAngleLineEdit->setPlaceholderText("degrees");
 
     QLabel* trivialConnectionLabel = new QLabel("Trivial Connections", toolBox);
     QPushButton* runButton = new QPushButton("Run!", toolBox);
@@ -159,24 +160,24 @@ void VectorFields::initializePlugin() {
     QPushButton* fakeVectorFieldButton = new QPushButton("Generate Fake Vector Field", toolBox);
 
     QGridLayout* layout = new QGridLayout(toolBox);
-    layout->addWidget(initMeshButton, 0, 1, 1, 2);
-    layout->addWidget(singularityLabel, 0, 0, 1, 1);
-    layout->addWidget(singularityTable, 1, 0, 1, 3);
+    layout->addWidget(initMeshButton, 0, 0, 1, 3);
+    layout->addWidget(singularityLabel, 1, 0, 1, 3);
+    layout->addWidget(singularityTable, 2, 0, 1, 3);
 
-    layout->addWidget(addSingularityButton, 2, 0);
-    layout->addWidget(removeSingularityButton, 2, 1);
-    layout->addWidget(clearSingularityButton, 2, 2);
+    layout->addWidget(addSingularityButton, 3, 0);
+    layout->addWidget(removeSingularityButton, 3, 1);
+    layout->addWidget(clearSingularityButton, 3, 2);
 
-    layout->addWidget(constraintsLabel, 3, 0, 1, 3);
-    layout->addWidget(setConstrainedFacesButton, 4, 0, 1, 3);
-    layout->addWidget(faceVectorLabel, 5, 0, 1, 1);
-    layout->addWidget(setFaceVectorLineEdit, 5, 1, 1, 2);
+    layout->addWidget(constraintsLabel, 4, 0, 1, 3);
+    layout->addWidget(setConstrainedFacesButton, 5, 0, 1, 3);
+    layout->addWidget(rootFaceAngleLabel, 6, 0, 1, 1);
+    layout->addWidget(setRootFaceAngleLineEdit, 6, 1, 1, 2);
 
-    layout->addWidget(trivialConnectionLabel, 6, 0, 1, 3);
-    layout->addWidget(runButton, 7, 0, 1, 3);
-    layout->addWidget(showVectorFieldButton, 8, 0, 1, 3);
+    layout->addWidget(trivialConnectionLabel, 7, 0, 1, 3);
+    layout->addWidget(runButton, 8, 0, 1, 3);
+    layout->addWidget(showVectorFieldButton, 9, 0, 1, 3);
 
-    layout->addWidget(fakeVectorFieldButton, 9, 0, 1, 3);
+    layout->addWidget(fakeVectorFieldButton, 10, 0, 1, 3);
 
 
     // connect(smoothButton, SIGNAL(clicked()), this, SLOT(simpleLaplace()));
@@ -191,6 +192,7 @@ void VectorFields::initializePlugin() {
     connect(singularityTable, SIGNAL(cellChanged(int, int)), this, SLOT(onCellChanged(int, int)));
 
     connect(setConstrainedFacesButton, SIGNAL(clicked()), this, SLOT(setConstraintFaces()));
+    connect(setRootFaceAngleLineEdit, SIGNAL(textEdited(const QString &)), this, SLOT(onRootFaceAngleChanged(const QString &)));
 
     connect(runButton, SIGNAL(clicked()), this, SLOT(runAll()));
 
@@ -234,7 +236,7 @@ void VectorFields::initializeMesh() {
             }
 
 
-            tri_obj->meshNode()->drawMode(ACG::SceneGraph::DrawModes::WIREFRAME | ACG::SceneGraph::DrawModes::SOLID_SMOOTH_SHADED | ACG::SceneGraph::DrawModes::POINTS_COLORED);
+            tri_obj->meshNode()->drawMode(ACG::SceneGraph::DrawModes::WIREFRAME | ACG::SceneGraph::DrawModes::SOLID_SMOOTH_SHADED | ACG::SceneGraph::DrawModes::POINTS_COLORED | ACG::SceneGraph::DrawModes::SOLID_FACES_COLORED);
 
             tri_obj->materialNode()->enable_alpha_test(0.8);
             updateVertexColors(*mesh_);
@@ -242,6 +244,8 @@ void VectorFields::initializeMesh() {
             emit updatedObject(tri_obj->id(), UPDATE_ALL);
 
             findCyclesAndBuildA(nullptr);
+
+            constrained_faces_.clear();
             // showMessage("Init complete! \n" );
 
         }
@@ -252,6 +256,9 @@ void VectorFields::initializeMesh() {
 }
 
 void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
+
+    uint64_t start_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
 
     // Find Cycles
 
@@ -269,10 +276,17 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
 
     std::cout << "Found " << nGenerators << " non-contractible cycles..." << std::endl;
 
+
+    std::vector<Cycle> constrainedFacePaths;
+    findConstrainedFacePaths(*mesh_, constrainedFacePaths);
+
+    std::cout << "Num of paths: " << constrainedFacePaths.size() << std::endl;
+
     basisCycles.clear();
     basisCycles.reserve(contraCycles.size() + nonContraCycles.size());
     basisCycles.insert(basisCycles.end(), contraCycles.begin(), contraCycles.end());
     basisCycles.insert(basisCycles.end(), nonContraCycles.begin(), nonContraCycles.end());
+    basisCycles.insert(basisCycles.end(), constrainedFacePaths.begin(), constrainedFacePaths.end());
 
     showCycles(nonContraCycles);
 
@@ -314,6 +328,25 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
         // }
     }
 
+    for (int i = 0; i < constrainedFacePaths.size(); i++) {
+        // if (isDualBoundaryLoop(mesh_, basisCycles[i])) {
+        //     K( i ) = -boundaryLoopCurvature( basisCycles[i] );
+        //     generatorOnBoundary[i - nContractibleCycles ] = true;
+        // }
+        // else {
+            double theta = root_face_angle_ / 180 * M_PI;
+
+            for (auto he : constrainedFacePaths[i]) {
+                theta = parallelTransport(theta, he);
+            }
+
+            K( i + contraCycles.size() + nonContraCycles.size()) = root_face_angle_ / 180 * M_PI - theta;
+        //     generatorOnBoundary[i-nContractibleCycles] = false;
+        // }
+    }
+
+
+
     A = A.transpose();
 
     std::cout << "QRSolver: Computing A..." << std::endl;
@@ -322,13 +355,39 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
 
     // Build d1
     buildD1(d1_);
+    uint64_t end_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
-    std::cout << "Initialized!" << std::endl;
+    std::cout << "Initialized! Time: " << end_time - start_time << "ms." << std::endl;
     std::cout << "Matrix A: " << A.rows() << " rows " << A.cols() << " cols." << std::endl;
     std::cout << "Matrix K: " << K.rows() << " rows " << K.cols() << " cols." << std::endl;
     std::cout << "Matrix d1: " << d1_.rows() << " rows " << d1_.cols() << " cols." << std::endl;
 
     showMessage("Found " + std::to_string(contraCycles.size()) + " contra cycles and " + std::to_string(nGenerators) + " non-contra cycles." );
+
+}
+
+void VectorFields::findConstrainedFacePaths(TriMesh & _mesh, std::vector<Cycle> & paths) {
+    if (constrained_faces_.size() > 1) {
+        OpenMesh::SmartFaceHandle root_face = constrained_faces_[0];
+        for (int i=1; i<constrained_faces_.size(); i++) {
+            Cycle path;
+            OpenMesh::SmartFaceHandle fh = constrained_faces_[i];
+
+            do {
+                for (auto heh:fh.halfedges()) {
+                    if (heh.opp().face().idx()==mesh_->property(parent_dual_, fh).idx()){
+                        path.push_back(heh);
+                        fh = heh.opp().face();
+                        break;
+                    }
+                }
+
+            } while (std::find(constrained_faces_.begin(), constrained_faces_.end(), fh) == constrained_faces_.end());
+
+
+            paths.push_back(path);
+        }
+    }
 
 }
 
@@ -394,10 +453,6 @@ void VectorFields::addSingularity() {
                     trimesh->status(vh).set_selected(false);
                 }
             }
-
-            tri_obj->meshNode()->drawMode(ACG::SceneGraph::DrawModes::WIREFRAME | ACG::SceneGraph::DrawModes::SOLID_SMOOTH_SHADED | ACG::SceneGraph::DrawModes::POINTS_COLORED);
-
-            tri_obj->materialNode()->enable_alpha_test(0.8);
 
             updateVertexColors(*trimesh);
 
@@ -701,10 +756,10 @@ void VectorFields::setupRHS() {
 void VectorFields::resetRHS() {
     // make a cop
       // make a copy of the right hand side used in the most recent solve
-      for( int i = 0; i < basisCycles.size(); i++ )
+    for( int i = 0; i < basisCycles.size(); i++ )
       {
-         b(i) = K(i);
-      }
+        b(i) = K(i);
+    }
 }
 
 void VectorFields::update() {
@@ -997,6 +1052,143 @@ void VectorFields::buildD1(Eigen::SparseMatrix<double>& d1) {
 }
 
 void VectorFields::setConstraintFaces() {
+    for (PluginFunctions::ObjectIterator o_it(PluginFunctions::TARGET_OBJECTS, DATA_TRIANGLE_MESH); o_it != PluginFunctions::objectsEnd(); ++o_it) {
+        auto tri_obj = PluginFunctions::triMeshObject(*o_it);
+        auto trimesh = tri_obj->mesh();
+
+        if (mesh_ == trimesh) {
+
+            tri_obj->materialNode()->set_point_size(12);
+
+            constrained_faces_.clear();
+            for(auto fh : trimesh->faces()) {
+                mesh_->set_color(fh, ACG::Vec4f(1,1,1,0)); // reset
+
+                if(trimesh->status(fh).selected()) {
+                    if (std::find(constrained_faces_.begin(), constrained_faces_.end(), fh) != constrained_faces_.end()){
+                        continue;
+                    }
+                    constrained_faces_.push_back(fh);
+                    trimesh->status(fh).set_selected(false);
+                    mesh_->set_color(fh, ACG::Vec4f(0,1,0,1));
+
+                    mesh_->status(fh).set_selected(false);
+                }
+
+            }
+
+            emit updatedObject(tri_obj->id(), UPDATE_ALL);
+
+            std::cout << "Constrained faces: " << constrained_faces_.size() << std::endl;
+
+        }
+    }
+
+    if (constrained_faces_.size() > 0) {
+        showRootFaceVector();
+        findCyclesAndBuildA(&constrained_faces_[0]);
+    }
+
+}
+
+void VectorFields::onRootFaceAngleChanged(const QString & text) {
+    if (text == "") {
+        root_face_angle_ = 0;
+        setRootFaceAngleLineEdit->setText("0");
+    }
+
+    bool isInt = false;
+    float new_angle = text.toInt(&isInt);
+    if (isInt) {
+        root_face_angle_ = new_angle;
+    } else {
+        setRootFaceAngleLineEdit->setText(std::to_string(root_face_angle_).c_str());
+    }
+
+    showRootFaceVector();
+}
+
+void VectorFields::showRootFaceVector() {
+    if (constrained_faces_.size() == 0) {
+        return;
+    }
+
+    for (PluginFunctions::ObjectIterator o_it(PluginFunctions::TARGET_OBJECTS, DATA_TRIANGLE_MESH); o_it != PluginFunctions::objectsEnd(); ++o_it) {
+        auto tri_obj = PluginFunctions::triMeshObject(*o_it);
+        if (tri_obj->mesh() == mesh_) {
+
+
+            ACG::SceneGraph::LineNode* lineNode;
+            //create line node
+            if (!tri_obj->getAdditionalNode(lineNode, name(), "Root Face Vector"))
+            {
+                lineNode = new ACG::SceneGraph::LineNode(ACG::SceneGraph::LineNode::LineSegmentsMode,
+                        tri_obj->manipulatorNode(),"Root Face Vector");
+                tri_obj->addAdditionalNode(lineNode, name(), "Root Face Vector");
+
+                //creates the line
+                lineNode->clear_points();
+                lineNode->set_color(OpenMesh::Vec4f(1.0f,0.0f,0.0f,1.0f));
+                lineNode->set_line_width(3);
+                // lineNode->add_line(p0, p1);
+                // lineNode->alwaysOnTop() = true;
+            }else {
+                //creates the line
+                lineNode->clear_points();
+                lineNode->set_color(OpenMesh::Vec4f(1.0f,0.0f,0.0f,1.0f));
+                lineNode->set_line_width(3);
+                // lineNode->add_line(p0, p1);
+                // lineNode->alwaysOnTop() = true;
+            }
+
+            OpenMesh::SmartFaceHandle root_face = constrained_faces_[0];
+            OpenMesh::SmartHalfedgeHandle root_heh = root_face.halfedge();
+
+            double scale = 1;
+            for (auto heh : root_face.halfedges()) {
+                scale = (mesh_->point(heh.to()) - mesh_->point(heh.from())).norm() / 2;
+                break;
+            }
+
+            ACG::Vec3d init_direction = (mesh_->point(root_heh.to()) - mesh_->point(root_heh.from())).normalize();
+
+            ACG::Matrix3x3d E = orthogonalize(
+                mesh_->point(root_heh.from()) - mesh_->point(root_heh.to()),
+                mesh_->point(root_heh.next().to()) - mesh_->point(root_heh.next().from())
+            );
+
+            double rad = -root_face_angle_ / 180. * M_PI;
+            ACG::Matrix3x3d R({
+                cos(rad), -sin(rad), 0.,
+                sin(rad), cos(rad), 0.,
+                0., 0., 1.
+            });
+
+
+
+            ACG::Vec3d dir = E * R * E.inverse() * init_direction;
+
+            root_face_dir_ = dir;
+
+            ACG::Vec3d centroid(0, 0, 0);
+            for (auto vh : root_face.vertices()) {
+                centroid += mesh_->point(vh);
+            }
+            centroid /= 3;
+
+            ACG::Vec3d p0 = centroid - scale / 2. * dir;
+            ACG::Vec3d p1 = centroid + scale / 2. * dir;
+
+            lineNode->add_color(OpenMesh::Vec4f(0.0f,0.0f,1.0f,1.0f));
+            lineNode->add_line(p0, p1);
+
+            lineNode->add_color(OpenMesh::Vec4f(0.0f,1.0f,0.0f,1.0f));
+            lineNode->add_line(.2*p0+.8*p1, p1);
+
+        }
+    }
+
+    emit updateView();
 
 }
 
@@ -1010,6 +1202,8 @@ void VectorFields::runAll() {
     // 5. Build the linear system, and solve for adjustment angles
     // 6. Construct the direction fields, save the angle with each face
     // 7. Visualise the vector field on the mesh
+
+    uint64_t start_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     bool initialized = false;
     for (PluginFunctions::ObjectIterator o_it(PluginFunctions::TARGET_OBJECTS, DATA_TRIANGLE_MESH); o_it != PluginFunctions::objectsEnd(); ++o_it) {
@@ -1098,7 +1292,10 @@ void VectorFields::runAll() {
     
     std::cout << "Start building the vector field..." << std::endl;
     showVectorField();
-    std::cout << "Completed! " << std::endl;
+
+    uint64_t end_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+    std::cout << "Completed! Time: " << end_time - start_time << "ms." << std::endl;
 
 }
 
@@ -1279,23 +1476,31 @@ void VectorFields::showVectorField() {
     if (!mesh_) return;
 
     // OpenMesh::SmartFaceHandle root_face = *(mesh_->faces_begin());
-    OpenMesh::SmartFaceHandle root_face = OpenMesh::SmartFaceHandle(420, mesh_);
-    OpenMesh::SmartHalfedgeHandle root_heh;
+    OpenMesh::SmartFaceHandle root_face;
+    if (constrained_faces_.size() > 0) {
+        root_face = constrained_faces_[0];
+        mesh_->property(face_tangent_vector_, root_face) = root_face_dir_.normalize();
+    } else {
+        root_face = *(mesh_->faces_begin());
+            OpenMesh::SmartHalfedgeHandle root_heh;
 
-    for (auto heh : root_face.halfedges()) {
-        root_heh = heh;
-        break;
+        for (auto heh : root_face.halfedges()) {
+            root_heh = heh;
+            break;
+        }
+
+        ACG::Vec3d init_direction = (mesh_->point(root_heh.to()) - mesh_->point(root_heh.from())).normalize();
+
+        std::cout << "First direction: " << init_direction << " " << root_heh.from().idx() << "->" << root_heh.to().idx() << std::endl;
+        auto second_heh = root_heh.next();
+        ACG::Vec3d second_direction = (mesh_->point(second_heh.to()) - mesh_->point(second_heh.from())).normalize();
+        // std::cout << "Second direction: " << second_direction << " " << second_heh.from().idx() << "->" << second_heh.to().idx() << std::endl;
+
+        // mesh_->property(face_tangent_vector_, root_face) = init_direction.normalize();
+        mesh_->property(face_tangent_vector_, root_face) = -( - init_direction + second_direction ).normalize();
+
     }
-
-    ACG::Vec3d init_direction = (mesh_->point(root_heh.to()) - mesh_->point(root_heh.from())).normalize();
-
-    std::cout << "First direction: " << init_direction << " " << root_heh.from().idx() << "->" << root_heh.to().idx() << std::endl;
-    auto second_heh = root_heh.next();
-    ACG::Vec3d second_direction = (mesh_->point(second_heh.to()) - mesh_->point(second_heh.from())).normalize();
-    // std::cout << "Second direction: " << second_direction << " " << second_heh.from().idx() << "->" << second_heh.to().idx() << std::endl;
-
-    mesh_->property(face_tangent_vector_, root_face) = init_direction.normalize();
-    mesh_->property(face_tangent_vector_, root_face) = -( - init_direction + second_direction ).normalize();
+    // OpenMesh::SmartFaceHandle root_face = OpenMesh::SmartFaceHandle(420, mesh_);
 
     std::vector<OpenMesh::SmartFaceHandle> Q;
     std::map<int, bool> visited;
@@ -1365,8 +1570,8 @@ void VectorFields::showVectorField() {
                 }
                 centroid /= 3;
 
-                ACG::Vec3d p0 = centroid - scale / 3 * dir;
-                ACG::Vec3d p1 = centroid + scale / 3 * dir;
+                ACG::Vec3d p0 = centroid - scale / 2. * dir;
+                ACG::Vec3d p1 = centroid + scale / 2. * dir;
 
                 lineNode->add_color(OpenMesh::Vec4f(0.0f,0.0f,1.0f,1.0f));
                 lineNode->add_line(p0, p1);

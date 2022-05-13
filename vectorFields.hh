@@ -122,7 +122,6 @@ private:
     Eigen::MatrixXd b; // b is the final defects applied with singularities.
 
     void findContractibleLoops(TriMesh& mesh, std::vector<Cycle>& basisCycles);
-    void appendDirectionalConstraints(TriMesh& mesh, std::vector<Cycle>& basisCycles, std::vector<double>& holonomies);
     void buildCycleMatrix(Eigen::SparseMatrix<double>& A, std::vector<Cycle>& cycles);
     void buildD1(Eigen::SparseMatrix<double>& d1);
     void resetRHS();

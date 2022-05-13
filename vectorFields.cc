@@ -329,11 +329,6 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
     }
 
     for (int i = 0; i < constrainedFacePaths.size(); i++) {
-        // if (isDualBoundaryLoop(mesh_, basisCycles[i])) {
-        //     K( i ) = -boundaryLoopCurvature( basisCycles[i] );
-        //     generatorOnBoundary[i - nContractibleCycles ] = true;
-        // }
-        // else {
             double theta = root_face_angle_ / 180 * M_PI;
 
             for (auto he : constrainedFacePaths[i]) {
@@ -341,8 +336,6 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
             }
 
             K( i + contraCycles.size() + nonContraCycles.size()) = root_face_angle_ / 180 * M_PI - theta;
-        //     generatorOnBoundary[i-nContractibleCycles] = false;
-        // }
     }
 
 
@@ -367,6 +360,8 @@ void VectorFields::findCyclesAndBuildA(OpenMesh::SmartFaceHandle* root_fh) {
 }
 
 void VectorFields::findConstrainedFacePaths(TriMesh & _mesh, std::vector<Cycle> & paths) {
+    // For each constrained face we follow it back along the tree until another constrained face. 
+    // Push this path into the vector.
     if (constrained_faces_.size() > 1) {
         OpenMesh::SmartFaceHandle root_face = constrained_faces_[0];
         for (int i=1; i<constrained_faces_.size(); i++) {
@@ -392,7 +387,7 @@ void VectorFields::findConstrainedFacePaths(TriMesh & _mesh, std::vector<Cycle> 
 }
 
 void VectorFields::updateVertexColors(TriMesh & _mesh) {
-
+    // This function is to highlight vertices with singularities.
 
     //reset
     for(auto vh : _mesh.vertices()) {
@@ -688,6 +683,9 @@ bool VectorFields::isDualBoundaryLoop(TriMesh& mesh_, const Cycle& cycle) {
 }
 
 void VectorFields::appendDualGenerators(TriMesh& mesh_, std::vector<Cycle>& cycles) {
+    // Find "orphan" edges that are not in the dual tree, and do not cross the primal tree.
+    // Follow the two endpoints along the dual tree to find the cycles.
+
     int orphan_count = 0;
     for(auto eh : mesh_.edges()) {
         if(mesh_.is_boundary(eh)) continue;
@@ -977,16 +975,6 @@ void VectorFields::buildCycleMatrix(Eigen::SparseMatrix<double>& A, std::vector<
     A.setFromTriplets(triplets_A.begin(), triplets_A.end());
 }
 
-void VectorFields::appendDirectionalConstraints(TriMesh& mesh, std::vector<Cycle>& basisCycles, std::vector<double>& holonomies) {
-    // first point all faces to themselves to indicate that they have not yet
-    // been added to the tree; meanwhile look for a constrained face to serve
-    // as the root for our constraint tree (if there aren't any constrained
-    // faces, an arbitrary face will work just fine)
-    // for ( auto fh : mesh.faces() ) {
-        
-    // }
-}
-
 void VectorFields::findContractibleLoops(TriMesh& mesh, std::vector<Cycle>& basisCycles) {
     // contractible bases
                     // maybe n_vertices = size()?
@@ -1028,13 +1016,9 @@ void VectorFields::buildD1(Eigen::SparseMatrix<double>& d1) {
         int start_heh = heh.idx();
         while (true) {
             int j = heh.opp().face().idx();
-            // if (i<j) {
-            //     triplets_d1.emplace_back(i, heh.edge().idx(), 1.);
-            // } else {
-            //     triplets_d1.emplace_back(i, heh.edge().idx(), -1);
-            // }
 
             if (heh.idx() == heh.edge().h0().idx()) {
+                // Use the direction defined by OpenFlipper.
                 triplets_d1.emplace_back(i, heh.edge().idx(), 1.);
             } else {
                 triplets_d1.emplace_back(i, heh.edge().idx(), -1);
